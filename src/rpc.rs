@@ -314,11 +314,12 @@ fn der_to_pem_certificate(der: &[u8]) -> Vec<u8> {
 // ─── live \PIPE\cert transport (feature = "network") ────────────────────────
 
 #[cfg(feature = "network")]
-pub use network::NetworkTransport;
+pub use network::{KerberosTransport, NetworkTransport};
 
 #[cfg(feature = "network")]
 mod network {
     use super::*;
+    use crate::kerberos::{encode_kerberos_bind_pdu, KrbTicket, ICPR_SYNTAX_UUID};
     use dcerpc::transport::SmbPipe;
     use dcerpc::Syntax;
 
@@ -418,6 +419,137 @@ mod network {
             ca_name: impl Into<String>,
         ) -> Result<Self> {
             let transport = NetworkTransport::connect(host, domain, user, password)?;
+            Ok(super::IcprClient::new(transport, ca_name))
+        }
+    }
+
+    // ─── Kerberos-authenticated transport ───────────────────────────────
+
+    /// Kerberos (`RPC_C_AUTHN_GSS_KERBEROS`) sealed-bind transport for
+    /// `\PIPE\cert`. `connect()` performs SMB2 negotiate +
+    /// `login_kerberos` (single-shot pass-the-ticket) + `IPC$` tree
+    /// connect, then holds the ticket for BIND-time use.
+    ///
+    /// Each [`IcprTransport::cert_server_request`] call opens the `cert`
+    /// pipe, WRITEs the Kerberos-authenticated BIND PDU (see
+    /// [`crate::kerberos::encode_kerberos_bind_pdu`]), and READs the
+    /// BIND_ACK — proving the CA accepted the AP-REQ. The follow-up
+    /// sealed `CertServerRequest` opnum-0 call requires an RFC 4121
+    /// GSS-KRB5 per-message sealer that this crate does not yet ship;
+    /// this method returns [`Error::LiveDcOnly`] with a hint after a
+    /// successful BIND.
+    ///
+    /// Why bother, given that: the BIND path itself proves the enrollment
+    /// ticket is valid and the CA is reachable under Kerberos auth (which
+    /// bypasses NTLM-audit signals blue teams commonly watch). Once the
+    /// sealer is wired, no interface changes.
+    pub struct KerberosTransport {
+        client: smb2_client::SmbClient,
+        ticket: KrbTicket,
+        runtime: tokio::runtime::Runtime,
+    }
+
+    impl KerberosTransport {
+        /// Log in to `host` over SMB2/445 using the Kerberos service ticket
+        /// (pass-the-ticket) and tree-connect to `\\host\IPC$`.
+        pub fn connect(host: &str, ticket: KrbTicket) -> Result<Self> {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| Error::Rpc(format!("tokio runtime: {e}")))?;
+            let host_owned = host.to_string();
+            let ap_req = ticket.ap_req.clone();
+            let session_key = ticket.session_key;
+            let client = runtime.block_on(async {
+                let mut c = smb2_client::SmbClient::connect(&host_owned)
+                    .await
+                    .map_err(|e| Error::Rpc(format!("smb connect {host_owned}: {e}")))?;
+                c.login_kerberos(&ap_req, &session_key)
+                    .await
+                    .map_err(|e| Error::Rpc(format!("smb login_kerberos: {e}")))?;
+                c.tree_connect(&format!("\\\\{host_owned}\\IPC$"))
+                    .await
+                    .map_err(|e| Error::Rpc(format!("tree_connect IPC$: {e}")))?;
+                Ok::<_, Error>(c)
+            })?;
+            Ok(KerberosTransport {
+                client,
+                ticket,
+                runtime,
+            })
+        }
+
+        /// Build the exact BIND PDU bytes this transport will WRITE to the
+        /// `\PIPE\cert` handle on the next `cert_server_request` call.
+        /// Useful for replay fixtures, wire-shape assertions, and fuzz
+        /// harnesses without needing a live pipe.
+        pub fn bind_pdu(&self, call_id: u32) -> Vec<u8> {
+            encode_kerberos_bind_pdu(call_id, ICPR_SYNTAX_UUID, 0, 0, &self.ticket.ap_req)
+        }
+    }
+
+    impl IcprTransport for KerberosTransport {
+        fn cert_server_request(&mut self, _marshaled_in: &[u8]) -> Result<Vec<u8>> {
+            let Self {
+                client,
+                ticket,
+                runtime,
+            } = self;
+            let ap_req = ticket.ap_req.clone();
+            runtime.block_on(async move {
+                let file_id = client
+                    .open_pipe("cert")
+                    .await
+                    .map_err(|e| Error::Rpc(format!("open pipe \\cert: {e}")))?;
+                // Send the Kerberos BIND (auth_type = 0x10) — proves the CA
+                // accepts the caller's AP-REQ. Read one PDU back (BIND_ACK
+                // or BIND_NAK); we surface a NAK as an Rpc error so the
+                // caller learns fast if the ticket is wrong (unknown SPN /
+                // clock skew / bad enc-type).
+                let bind = encode_kerberos_bind_pdu(1, ICPR_SYNTAX_UUID, 0, 0, &ap_req);
+                let ack = client
+                    .transact(&file_id, &bind)
+                    .await
+                    .map_err(|e| Error::Rpc(format!("smb transact kerberos bind: {e}")))?;
+                if ack.len() < 16 || ack[0] != 5 {
+                    return Err(Error::Rpc(format!("bad BIND reply ({} bytes)", ack.len())));
+                }
+                // ptype: 12 = BIND_ACK, 13 = BIND_NAK.
+                match ack[2] {
+                    12 => Ok::<(), Error>(()),
+                    13 => {
+                        return Err(Error::Rpc(
+                            "CA rejected Kerberos BIND (BIND_NAK) — check SPN, \
+                             enc-type, and clock skew"
+                                .into(),
+                        ));
+                    }
+                    other => {
+                        return Err(Error::Rpc(format!(
+                            "unexpected reply ptype 0x{other:02x} to Kerberos BIND"
+                        )));
+                    }
+                }?;
+                // BIND accepted. The sealed CertServerRequest call needs the
+                // RFC 4121 GSS-KRB5 per-message wrap, which this crate does
+                // not ship yet.
+                Err(Error::LiveDcOnly)
+            })
+        }
+    }
+
+    impl super::IcprClient<KerberosTransport> {
+        /// SMB2 login (Kerberos, pass-the-ticket) + IPC$ tree-connect, wrap
+        /// in an [`IcprClient`] targeting `ca_name`. See
+        /// [`KerberosTransport`] for what
+        /// [`submit_request`](super::IcprClient::submit_request) actually
+        /// does today.
+        pub fn connect_kerberos(
+            host: &str,
+            ticket: KrbTicket,
+            ca_name: impl Into<String>,
+        ) -> Result<Self> {
+            let transport = KerberosTransport::connect(host, ticket)?;
             Ok(super::IcprClient::new(transport, ca_name))
         }
     }

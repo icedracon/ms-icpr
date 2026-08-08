@@ -21,9 +21,17 @@
 //!   preflight; with the default `network` feature you get
 //!   [`IcprClient::connect`] which speaks SMB2 → sealed `\PIPE\cert` →
 //!   `CertServerRequest` → decoded response.
-//! - NTLMSSP-only for now — no Kerberos/AES yet. Consumers wanting relay
-//!   flows plug in their own transport via [`IcprTransport`] +
-//!   [`rpc::encode_cert_server_request`] / [`rpc::decode_cert_server_response`].
+//! - Two BIND auth paths:
+//!     * NTLMSSP sign+seal ([`IcprClient::connect`]) — end-to-end live.
+//!     * Kerberos (GSS-KRB5, `RPC_C_AUTHN_GSS_KERBEROS`) —
+//!       [`IcprClient::connect_kerberos`] does SMB2 `login_kerberos` + `IPC$`
+//!       tree connect and produces a client whose BIND PDU carries the caller's
+//!       `AP-REQ` (see [`kerberos::encode_kerberos_bind_pdu`]). The per-message
+//!       RFC 4121 wrap for `CertServerRequest` sealed calls is not implemented
+//!       yet — [`IcprClient::submit_request`] returns [`Error::LiveDcOnly`]
+//!       with a Kerberos-sealing hint. Consumers wanting relay flows plug in
+//!       their own transport via [`IcprTransport`] +
+//!       [`rpc::encode_cert_server_request`] / [`rpc::decode_cert_server_response`].
 //!
 //! # Example
 //!
@@ -41,15 +49,20 @@
 pub mod csr;
 pub mod der;
 pub mod error;
+pub mod kerberos;
 pub mod oids;
 pub mod rpc;
 
 pub use csr::{build_csr_with_upn_san, parse_rsa_private_key_pem};
 pub use error::{Error, Result};
+pub use kerberos::{
+    encode_kerberos_auth3_pdu, encode_kerberos_bind_pdu, KrbTicket, ICPR_SYNTAX_UUID,
+    RPC_C_AUTHN_GSS_KERBEROS,
+};
 pub use rpc::{
     decode_cert_server_response, encode_cert_server_request, CertServerResponse, IcprClient,
     IcprTransport, IssuedCert, StubTransport, CERT_SERVER_REQUEST_OPNUM,
 };
 
 #[cfg(feature = "network")]
-pub use rpc::NetworkTransport;
+pub use rpc::{KerberosTransport, NetworkTransport};
