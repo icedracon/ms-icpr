@@ -82,8 +82,8 @@ fn csr_signature_algorithm_is_sha256_with_rsa() {
 #[test]
 fn csr_rejects_upn_without_at_sign() {
     let key = fresh_key_pem();
-    let err = build_csr_with_upn_san("recon", "no-at-sign", &key)
-        .expect_err("bare string is not a UPN");
+    let err =
+        build_csr_with_upn_san("recon", "no-at-sign", &key).expect_err("bare string is not a UPN");
     let msg = format!("{err}");
     assert!(msg.contains("upn"), "want upn-shape error, got {msg}");
 }

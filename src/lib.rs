@@ -15,11 +15,15 @@
 //! - `build_csr_with_upn_san` produces a valid, signed PKCS#10 CSR carrying
 //!   the UPN otherName SAN. Offline-testable, round-trip-verified.
 //! - `IcprClient::submit_request` performs offline pre-flight checks
-//!   (schema version, `min_ra_signatures`, CSR shape) and then returns
-//!   [`Error::LiveDcOnly`]. The NDR marshalling of `CertServerRequest`
-//!   requires live-DC iteration and is deferred to a follow-up turn.
-//! - No SPNEGO/Kerberos wiring; consumers plug in their own transport via
-//!   the [`IcprTransport`] trait.
+//!   (schema version, `min_ra_signatures`, CSR shape), NDR-marshals the
+//!   `CertServerRequest` opnum-0 input stub, and hands it to the transport.
+//!   With [`rpc::StubTransport`] you get [`Error::LiveDcOnly`] after
+//!   preflight; with the default `network` feature you get
+//!   [`IcprClient::connect`] which speaks SMB2 → sealed `\PIPE\cert` →
+//!   `CertServerRequest` → decoded response.
+//! - NTLMSSP-only for now — no Kerberos/AES yet. Consumers wanting relay
+//!   flows plug in their own transport via [`IcprTransport`] +
+//!   [`rpc::encode_cert_server_request`] / [`rpc::decode_cert_server_response`].
 //!
 //! # Example
 //!
@@ -42,4 +46,10 @@ pub mod rpc;
 
 pub use csr::{build_csr_with_upn_san, parse_rsa_private_key_pem};
 pub use error::{Error, Result};
-pub use rpc::{IcprClient, IcprTransport, IssuedCert, StubTransport};
+pub use rpc::{
+    decode_cert_server_response, encode_cert_server_request, CertServerResponse, IcprClient,
+    IcprTransport, IssuedCert, StubTransport, CERT_SERVER_REQUEST_OPNUM,
+};
+
+#[cfg(feature = "network")]
+pub use rpc::NetworkTransport;

@@ -28,16 +28,16 @@ pub fn parse_rsa_private_key_pem(pem: &[u8]) -> Result<RsaPrivateKey> {
     if s.contains("BEGIN RSA PRIVATE KEY") {
         return RsaPrivateKey::from_pkcs1_pem(s).map_err(|e| Error::Key(format!("pkcs1: {e}")));
     }
-    Err(Error::Key("no recognized RSA private key PEM header".into()))
+    Err(Error::Key(
+        "no recognized RSA private key PEM header".into(),
+    ))
 }
 
 /// Encode a `Name` = `SEQUENCE OF RelativeDistinguishedName` with a single
 /// `CN` RDN. Sufficient for AD-CS enrollment where the CA replaces the
 /// subject anyway when `NameFlag::ENROLLEE_SUPPLIES_SUBJECT` is not set.
 fn subject_cn(cn: &str) -> Result<Vec<u8>> {
-    let atv = der::sequence(
-        &[der::oid(oids::AT_COMMON_NAME)?, der::utf8_string(cn)].concat(),
-    );
+    let atv = der::sequence(&[der::oid(oids::AT_COMMON_NAME)?, der::utf8_string(cn)].concat());
     let rdn = der::set(&atv);
     Ok(der::sequence(&rdn))
 }
@@ -47,9 +47,8 @@ fn subject_public_key_info(key: &RsaPrivateKey) -> Result<Vec<u8>> {
     let algo = der::sequence(&[der::oid(oids::RSA_ENCRYPTION)?, der::null()].concat());
     let n = key.n().to_bytes_be();
     let e = key.e().to_bytes_be();
-    let rsa_pubkey = der::sequence(
-        &[der::integer_be_unsigned(&n), der::integer_be_unsigned(&e)].concat(),
-    );
+    let rsa_pubkey =
+        der::sequence(&[der::integer_be_unsigned(&n), der::integer_be_unsigned(&e)].concat());
     let spk_bitstring = der::bit_string_no_unused(&rsa_pubkey);
     Ok(der::sequence(&[algo, spk_bitstring].concat()))
 }
