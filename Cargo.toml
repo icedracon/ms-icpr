@@ -5,9 +5,12 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/icedracon/ms-icpr"
 authors = ["zevs"]
-description = "ICertPassage / MS-ICPR client with ESC1 CSR-SAN-injection primitive (pre-alpha)"
-keywords = ["adcs", "icpr", "wcce", "esc1", "certificate"]
-categories = ["authentication", "cryptography"]
+description = "MS-ICPR / MS-WCCE client for AD CS enrollment with an ESC1 CSR SubjectAltName UPN-injection primitive"
+readme = "README.md"
+homepage = "https://github.com/icedracon/ms-icpr"
+documentation = "https://docs.rs/ms-icpr"
+keywords = ["active-directory", "adcs", "icpr", "esc1", "certificate"]
+categories = ["authentication", "cryptography", "network-programming"]
 
 [features]
 default = ["network"]
