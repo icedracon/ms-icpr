@@ -1,6 +1,6 @@
 [package]
 name = "ms-icpr"
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/icedracon/ms-icpr"
@@ -20,7 +20,7 @@ default = ["network"]
 network = ["dep:dcerpc", "dep:smb2-client", "dep:tokio"]
 
 [dependencies]
-ms-crtd = { path = "../ms-crtd", version = "0.1.0-dev" }
+ms-crtd = "0.1.0"
 ms-ndr = "0.1"
 dcerpc = { version = "0.2", optional = true }
 smb2-client = { version = "0.2", optional = true }
