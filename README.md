@@ -59,7 +59,7 @@ Part of a 4-crate ADCS attack chain — template parsing all the way to a live P
 - [`ms-pkca`](https://github.com/icedracon/ms-pkca) — PKINIT the issued cert into a Kerberos TGT + UnPAC-the-hash
 - [`ms-kile-fast`](https://github.com/icedracon/ms-kile-fast) — RFC 6113 FAST armor for the AS-REQ / TGS-REQ
 
-Together they aim for [Certipy](https://github.com/ly4k/Certipy) parity in pure Rust with an S-tier dep tree.
+Together they aim for [popular ADCS clients](https://github.com/ly4k/popular ADCS clients) parity in pure Rust with an S-tier dep tree.
 
 ## Dependencies
 
